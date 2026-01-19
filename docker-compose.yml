@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  # MongoDB
+  mongodb:
+    image: mongo:7.0
+    container_name: dentamate-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: adminpass123
+      MONGO_INITDB_DATABASE: dentamate
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - dentamate-network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis
+  redis:
+    image: redis:7-alpine
+    container_name: dentamate-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - dentamate-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Auth Service
+  auth-service:
+    build:
+      context: ./backend/auth-service
+      dockerfile: Dockerfile
+    container_name: dentamate-auth-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      MONGODB_URI: mongodb://admin:adminpass123@mongodb:27017/dentamate-auth?authSource=admin
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-in-production}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REFRESH_TOKEN: ${GOOGLE_REFRESH_TOKEN}
+      EMAIL_USER: ${EMAIL_USER}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+      TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
+      FRONTEND_URL: http://localhost:4200
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - dentamate-network
+    volumes:
+      - ./backend/auth-service/logs:/app/logs
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./backend/api-gateway
+      dockerfile: Dockerfile
+    container_name: dentamate-api-gateway
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key-change-in-production}
+      AUTH_SERVICE_URL: http://auth-service:3001
+      USER_SERVICE_URL: http://user-service:3002
+      CLINIC_SERVICE_URL: http://clinic-service:3003
+      APPOINTMENT_SERVICE_URL: http://appointment-service:3004
+      BILLING_SERVICE_URL: http://billing-service:3005
+      NOTIFICATION_SERVICE_URL: http://notification-service:3006
+      AI_DIAGNOSIS_SERVICE_URL: http://ai-diagnosis-service:3007
+      PRESCRIPTION_OCR_SERVICE_URL: http://prescription-ocr-service:3008
+      ANALYTICS_SERVICE_URL: http://analytics-service:3009
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+    networks:
+      - dentamate-network
+    volumes:
+      - ./backend/api-gateway/logs:/app/logs
+
+networks:
+  dentamate-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
+    driver: local
+  mongodb_config:
+    driver: local
+  redis_data:
+    driver: local
